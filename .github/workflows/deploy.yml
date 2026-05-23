@@ -25,6 +25,6 @@ jobs:
       - name: Deploy to Azure
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ vars.Azure_APP_NAME }}
-          publish-profile: ${{ secrets.Azure_WEBAPP_PUBLISH_PROFILE }}
+          app-name: ${{ vars.AZURE_APP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: ./publish
