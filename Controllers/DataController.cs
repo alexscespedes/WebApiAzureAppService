@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 namespace WebApiAzureAppService.Controllers;
 
 [ApiController]
-[Route("[controller]")]
+[Route("api/[controller]")]
 public class DataController : ControllerBase
 {
     private readonly ExternalApiOptions _apiOptions;
