@@ -73,7 +73,7 @@ jobs:
           docker build \
             -t $IMAGE_BASE:$SHORT_SHA \
             -t $IMAGE_BASE:latest \
-            -f MyApi/Dockerfile .
+            -f Dockerfile .
 
           docker push $IMAGE_BASE:$SHORT_SHA
           docker push $IMAGE_BASE:latest
