@@ -1,4 +1,4 @@
-name: Build, Push & Deploy
+name: CI/CD → Azure
 
 on:
   push:
@@ -10,32 +10,45 @@ permissions:
   id-token: write # required for OIDC
   contents: read
 
+env:
+  DOTNET_VERSION: "8.x"
+  IMAGE_NAME: myapi
+
 jobs:
-  build-and-test:
+  build-test:
+    name: Build & Test
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup .NET
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore, Build & Test
-        run: |
-          dotnet restore
-          dotnet build --no-restore -c Release
-          dotnet test --no-build -c Release --verbosity normal
+      - name: Restore
+        run: dotnet restore
 
-  deploy:
-    needs: build-and-test
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Test
+        run: dotnet test --no-build -c Release --verbosity normal
+
+  docker-push:
+    name: Docker Build & Push
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build-test
+    if: github.event_name == 'push'
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure Login (OIDC — no stored secrets)
+      - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -45,23 +58,63 @@ jobs:
       - name: Login to ACR
         run: az acr login --name ${{ vars.ACR_NAME }}
 
-      - name: Build & Push Docker image
+      - name: Set image metadata
+        id: meta
         run: |
-          IMAGE="${{ vars.ACR_NAME }}.azurecr.io/myapi:${{ github.sha }}"
-          LATEST="${{ vars.ACR_NAME }}.azurecr.io/myapi:latest"
+          SHORT_SHA="${GITHUB_SHA::8}"
+          echo "image_tag=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "IMAGE_BASE=${{ vars.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}" >> GITHUB_ENV
+          echo "SHORT_SHA=$SHORT_SHA" >> GITHUB_ENV
 
-          docker build -t $IMAGE -t $LATEST .
-          docker push $IMAGE
-          docker push $LATEST
-
-      - name: Deploy to App Service
+      - name: Build & Push
         run: |
-          az webapp config container set \
+          docker build \
+            -t $IMAGE_BASE:$SHORT_SHA \
+            -t $IMAGE_BASE:$latest \
+            -f Dockerfile .
+
+          docker push $IMAGE_BASE:$SHORT_SHA
+          docker push $IMAGE_BASE:$latest
+
+  deploy:
+    name: Deploy to Azure
+    runs-on: ubuntu-latest
+    needs: docker-push
+    environment:
+      name: production
+      url: https://${{ vars.AZURE_APP_NAME }}.azurewebsites.net
+
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update container image
+        run: |
+          az webapp config container \
             --name ${{ vars.AZURE_APP_NAME }} \
             --resource-group ${{ vars.AZURE_RG }} \
-            --container-image-name "${{ vars.ACR_NAME }}.azurecr.io/myapi:${{ github.sha }}"
+            --container-image-name \
+              "{{ vars.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ needs.docker-push.outputs.image_tag }}"
 
-      - name: Verify deployment
+      - name: Wait for deployment
         run: |
-          sleep 30   # give App Service time to pull image
-          curl --fail https://${{ vars.AZURE_APP_NAME }}.azurewebsites.net/health
+          echo "Waiting for App Service to pull new image..."
+          sleep 45
+
+      - name: Smoke test
+        run: |
+          URL="https://${{ vars.AZURE_APP_NAME }}.azurewebsites.net"
+
+          echo "→ Health check"
+          curl --fail --retry 5 --retry-delay 10 $URL/health
+
+          echo "→ Users endpoint"
+          RESPONSE=$(curl --fail --silent $URL/api/users)
+          COUNT=$(echo $RESPONSE | jq '.count')
+
+          echo "Users returned: $COUNT"
+          [ "$COUNT" -ge 1 ] && echo "✓ Smoke test passed" || (echo "✗ No users returned" && exit 1)

@@ -1,9 +1,19 @@
 using Azure.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
 using WebApiAzureAppService;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure the HTTP request pipeline.
+if (!builder.Environment.IsDevelopment())
+{
+    var keyVaultUri = new Uri(builder.Configuration["KeyVaultUri"]!);
+
+    builder.Configuration.AddAzureKeyVault(
+        keyVaultUri,
+        new DefaultAzureCredential()
+    );
+}
 
 // Add services to the container.
 
@@ -20,20 +30,6 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     )
 );
 
-
-/*
-// Configure the HTTP request pipeline.
-if (!builder.Environment.IsDevelopment())
-{
-    var keyVaultUri = new Uri(builder.Configuration["KeyVaultUri"]!);
-
-    builder.Configuration.AddAzureKeyVault(
-        keyVaultUri,
-        new DefaultAzureCredential()
-    );
-}
-*/
-
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -41,9 +37,6 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>("database");
-
-// builder.Services.Configure<ExternalApiOptions>(
-//     builder.Configuration.GetSection("ExternalApi"));
 
 
 var app = builder.Build();
@@ -68,6 +61,5 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.MapHealthChecks("/health");
-
 
 app.Run();
