@@ -4,10 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main] # build+test only, no deploy
+    branches: [main]
 
 permissions:
-  id-token: write # required for OIDC
+  id-token: write
   contents: read
 
 env:
@@ -15,6 +15,7 @@ env:
   IMAGE_NAME: myapi
 
 jobs:
+  # ── Job 1: Build & Test ──────────────────────────────────────
   build-test:
     name: Build & Test
     runs-on: ubuntu-latest
@@ -36,6 +37,7 @@ jobs:
       - name: Test
         run: dotnet test --no-build -c Release --verbosity normal
 
+  # ── Job 2: Build & Push Docker image ─────────────────────────
   docker-push:
     name: Docker Build & Push
     runs-on: ubuntu-latest
@@ -63,19 +65,20 @@ jobs:
         run: |
           SHORT_SHA="${GITHUB_SHA::8}"
           echo "image_tag=$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "IMAGE_BASE=${{ vars.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}" >> GITHUB_ENV
-          echo "SHORT_SHA=$SHORT_SHA" >> GITHUB_ENV
+          echo "IMAGE_BASE=${{ vars.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}" >> $GITHUB_ENV
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
 
       - name: Build & Push
         run: |
           docker build \
             -t $IMAGE_BASE:$SHORT_SHA \
-            -t $IMAGE_BASE:$latest \
-            -f Dockerfile .
+            -t $IMAGE_BASE:latest \
+            -f MyApi/Dockerfile .
 
           docker push $IMAGE_BASE:$SHORT_SHA
-          docker push $IMAGE_BASE:$latest
+          docker push $IMAGE_BASE:latest
 
+  # ── Job 3: Deploy to App Service ─────────────────────────────
   deploy:
     name: Deploy to Azure
     runs-on: ubuntu-latest
@@ -94,11 +97,11 @@ jobs:
 
       - name: Update container image
         run: |
-          az webapp config container \
+          az webapp config container set \
             --name ${{ vars.AZURE_APP_NAME }} \
             --resource-group ${{ vars.AZURE_RG }} \
             --container-image-name \
-              "{{ vars.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ needs.docker-push.outputs.image_tag }}"
+              "${{ vars.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ needs.docker-push.outputs.image_tag }}"
 
       - name: Wait for deployment
         run: |
